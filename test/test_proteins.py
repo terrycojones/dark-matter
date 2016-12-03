@@ -1,9 +1,10 @@
 from unittest import TestCase
-from six import StringIO
+from six import StringIO, assertRaisesRegex
 from six.moves import builtins
 from contextlib import contextmanager
 
-from dark.proteins import ProteinGrouper, VirusSampleFASTA
+from dark.proteins import (
+    ProteinGrouper, VirusSampleFASTA, readSampleTotalReadCounts)
 
 try:
     from unittest.mock import patch
@@ -11,6 +12,41 @@ except ImportError:
     from mock import patch
 
 from .mocking import File
+
+
+class TestReadSampleTotalReadCounts(TestCase):
+    """
+    Tests for the readSampleTotalReadCounts function.
+    """
+
+    def testNonIntegerCount(self):
+        """
+        """
+        error = "^invalid literal for int\(\) with base 10: 'xxx\\\\n'$"
+        fp = StringIO('sample-1 xxx\n')
+        assertRaisesRegex(self, ValueError, error, readSampleTotalReadCounts,
+                          fp)
+
+    def testEmpty(self):
+        """
+        If the total read count file is empty, an empty dict must be
+        returned.
+        """
+        fp = StringIO()
+        self.assertEqual({}, readSampleTotalReadCounts(fp))
+
+    def testNotEmpty(self):
+        """
+        If the total read count file is not empty, the expected dict must be
+        returned.
+        """
+        fp = StringIO('sample-1 322\nsample-2 345\n')
+        self.assertEqual(
+            {
+                'sample-1': 322,
+                'sample-2': 345,
+            },
+            readSampleTotalReadCounts(fp))
 
 
 class TestProteinGrouper(TestCase):

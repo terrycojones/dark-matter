@@ -80,6 +80,12 @@ if __name__ == '__main__':
               'image to.'))
 
     parser.add_argument(
+        '--sampleTotalReadCountFilename', default=None,
+        help=('An (optional) filename providing total read counts per sample. '
+              'The file must contain lines with a sample name, whitespace, '
+              'then a non-negative integer read count.'))
+
+    parser.add_argument(
         '--html', default=False, action='store_true',
         help='If specified, output HTML instead of plain text.')
 
@@ -97,6 +103,8 @@ if __name__ == '__main__':
             grouper.addFile(filename, fp)
 
     if args.html:
-        print(grouper.toHTML(args.virusPanelFilename))
+        print(grouper.toHTML(
+            args.virusPanelFilename,
+            sampleTotalReadCountFilename=args.sampleTotalReadCountFilename))
     else:
         print(grouper.toStr())

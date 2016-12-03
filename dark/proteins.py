@@ -6,6 +6,7 @@ from operator import itemgetter
 from six.moves.urllib.parse import quote
 import numpy as np
 from textwrap import fill
+from math import log10
 
 try:
     import matplotlib.pyplot as plt
@@ -21,6 +22,26 @@ from dark.dimension import dimensionalIterator
 from dark.fasta import FastaReads
 from dark.html import NCBISequenceLinkURL
 from dark.reads import Reads
+
+
+def readSampleTotalReadCounts(fp):
+    """
+    Read a file of total sample read counts and return it as a C{dict}.
+
+    @param fp: An open file pointer to read from.
+    @raise ValueError: If a count is not an integer.
+    @return: A C{dict} mapping C{str} sample names to C{int} sample total read
+        count.
+    """
+    result = {}
+    for line in fp:
+        # The following implicitly assumes sample names do not have a
+        # space. We could change that by putting the count first in the
+        # file or by finding the last whitespace and splitting after that
+        # to get the count. For now I'm just noting the assumption.
+        sampleName, count = line.split(None, 1)
+        result[sampleName] = int(count)
+    return result
 
 
 class VirusSampleFASTA(object):
@@ -183,8 +204,14 @@ class ProteinGrouper(object):
 
         for index, proteinLine in enumerate(fp):
             proteinLine = proteinLine[:-1]
-            (coverage, medianScore, bestScore, readCount, hspCount,
-             proteinLength, titles) = proteinLine.split(None, 6)
+            try:
+                (coverage, medianScore, bestScore, readCount, hspCount,
+                 proteinLength, titles) = proteinLine.split(None, 6)
+            except ValueError as e:
+                raise ValueError(
+                    'Could not split line %d of file %r into 7 fields. '
+                    'Line was %r. ValueError from split: %s.' %
+                    (index + 1, filename, proteinLine, e))
 
             match = self.VIRUS_RE.match(titles)
             if match:
@@ -273,18 +300,23 @@ class ProteinGrouper(object):
 
         return '\n'.join(result)
 
-    def toHTML(self, virusPanelFilename=None):
+    def toHTML(self, virusPanelFilename=None,
+               sampleTotalReadCountFilename=None):
         """
         Produce an HTML string representation of the virus summary.
 
         @param virusPanelFilename: If not C{None}, a C{str} filename to write
             a virus panel PNG image to.
+        @param sampleTotalReadCountFilename: If not C{None}, a C{str} filename
+            providing total read count per sample. The file must contain lines
+            with a sample name, whitespace, then a non-negative integer read
+            count.
         @return: An HTML C{str} suitable for printing.
         """
         self._computeUniqueReadCounts()
 
         if virusPanelFilename:
-            self.virusPanel(virusPanelFilename)
+            self.virusPanel(virusPanelFilename, sampleTotalReadCountFilename)
 
         titleGetter = itemgetter('proteinTitle')
         virusTitles = sorted(self.virusTitles)
@@ -503,34 +535,55 @@ class ProteinGrouper(object):
 
         return '\n'.join(result)
 
-    def _virusSamplePlot(self, virusTitle, sampleNames, ax):
+    @staticmethod
+    def _normalizedReadCountColors(readCounts, sampleNames):
         """
-        Make an image of a graph giving virus read count (Y axis) versus
-        sample id (X axis).
+        Assign a color to each sample based on its normalized read count.
 
-        @param virusTitle: A C{str} virus title.
+        @param readCounts: A C{list} of C{int} read counts, corresponding
+            to the sample names in C{sampleNames}.
         @param sampleNames: A sorted C{list} of sample names.
-        @param ax: A matplotlib C{axes} instance.
+        @return: A 2-tuple of (color, highlightedSamples) where 'color' is
+            a C{list} of colors for samples and 'highlightedSamples' is a
+            C{list} of names of samples that were assigned the highlight color.
         """
-        readCounts = []
-        for i, sampleName in enumerate(sampleNames):
-            try:
-                readCount = self.virusTitles[virusTitle][sampleName][
-                    'uniqueReadCount']
-            except KeyError:
-                readCount = 0
-            readCounts.append(readCount)
+        highlight = 'r'
+        normal = 'gray'
+        minLoggedReadsForHighlighting = -6.0
+        highlightedSamples = []
+        color = []
 
+        for readCount, sampleName in zip(readCounts, sampleNames):
+            if readCount > minLoggedReadsForHighlighting:
+                color.append(highlight)
+                highlightedSamples.append(sampleName)
+            else:
+                color.append(normal)
+
+        return color, highlightedSamples
+
+    @staticmethod
+    def _readCountColors(readCounts, sampleNames):
+        """
+        Assign a color to each sample based on its read count.
+
+        @param readCounts: A C{list} of C{int} read counts, corresponding
+            to the sample names in C{sampleNames}.
+        @param sampleNames: A sorted C{list} of sample names.
+        @return: A 2-tuple of (color, highlightedSamples) where 'color' is
+            a C{list} of colors for samples and 'highlightedSamples' is a
+            C{list} of names of samples that were assigned the highlight color.
+        """
         highlight = 'r'
         normal = 'gray'
         sdMultiple = 2.5
         minReadsForHighlighting = 10
-        highlighted = []
+        highlightedSamples = []
 
         if len(readCounts) == 1:
             if readCounts[0] > minReadsForHighlighting:
                 color = [highlight]
-                highlighted.append(sampleNames[0])
+                highlightedSamples.append(sampleNames[0])
             else:
                 color = [normal]
         else:
@@ -541,19 +594,80 @@ class ProteinGrouper(object):
                 if (readCount > (sdMultiple * sd) + mean and
                         readCount >= minReadsForHighlighting):
                     color.append(highlight)
-                    highlighted.append(sampleName)
+                    highlightedSamples.append(sampleName)
                 else:
                     color.append(normal)
 
+        return color, highlightedSamples
+
+    def _virusSamplePlot(self, virusTitle, sampleNames, ax,
+                         sampleTotalReadCounts):
+        """
+        Make a plot of a graph with sample read count for a virus (Y axis)
+        versus sample id (X axis).
+
+        @param virusTitle: A C{str} virus title.
+        @param sampleNames: A sorted C{list} of sample names.
+        @param ax: A matplotlib C{axes} instance.
+        @param sampleTotalReadCounts: Either a C{dict} mapping sample names to
+            C{int} total read count for the sample, or C{None} if the total
+            read counts are unknown.
+        """
+        LOW_LOG = -10.0
+        readCounts = []
+        for i, sampleName in enumerate(sampleNames):
+            try:
+                readCount = self.virusTitles[virusTitle][sampleName][
+                    'uniqueReadCount']
+            except KeyError:
+                readCount = 0
+
+            if sampleTotalReadCounts:
+                ax.set_ylim([LOW_LOG, 1.0])
+                try:
+                    fraction = readCount / sampleTotalReadCounts[sampleName]
+                except ZeroDivisionError:
+                    raise ValueError('Sample %r has a zero total read count' %
+                                     sampleName)
+                else:
+                    if fraction == 0:
+                        readCounts.append(LOW_LOG)
+                    else:
+                        try:
+                            loggedFraction = log10(fraction)
+                        except ValueError as e:
+                            raise ValueError(
+                                'Sample %r read count %d total reads %d '
+                                'fraction %.20f got a ValueError: %s'
+                                % (sampleName, readCount,
+                                   sampleTotalReadCounts[sampleName],
+                                   fraction, e))
+                        else:
+                            readCounts.append(loggedFraction)
+            else:
+                readCounts.append(readCount)
+
+        if sampleTotalReadCounts:
+            color, highlightedSamples = self._normalizedReadCountColors(
+                readCounts, sampleNames)
+        else:
+            color, highlightedSamples = self._readCountColors(
+                readCounts, sampleNames)
+
         nSamples = len(sampleNames)
         x = np.arange(nSamples)
-        yMin = np.zeros(nSamples)
         ax.set_xticks([])
         ax.set_xlim((-0.5, nSamples - 0.5))
+
+        if sampleTotalReadCounts:
+            yMin = [LOW_LOG] * nSamples
+        else:
+            yMin = np.zeros(nSamples)
         ax.vlines(x, yMin, readCounts, color=color)
-        if highlighted:
+
+        if highlightedSamples:
             title = '%s\nIn red: %s' % (
-                virusTitle, fill(', '.join(highlighted), 50))
+                virusTitle, fill(', '.join(highlightedSamples), 50))
         else:
             # Add a newline to keep the first line of each title at the
             # same place as those titles that have an "In red:" second
@@ -564,16 +678,28 @@ class ProteinGrouper(object):
         ax.tick_params(axis='both', which='major', labelsize=8)
         ax.tick_params(axis='both', which='minor', labelsize=6)
 
-    def virusPanel(self, filename):
+    def virusPanel(self, filename, sampleTotalReadCountFilename=None):
         """
         Make a panel of images, with each image being a graph giving virus
         de-duplicated read count (Y axis) versus sample id (X axis).
 
         @param filename: A C{str} file name to write the image to.
+        @param sampleTotalReadCountFilename: If not C{None}, a C{str} filename
+            providing total read count per sample. The file must contain lines
+            with a sample name, whitespace, then a non-negative integer read
+            count.
+        @raise IOError: If C{sampleTotalReadCountFilename} names a non-existent
+            file.
         """
         self._computeUniqueReadCounts()
         virusTitles = sorted(self.virusTitles)
         sampleNames = sorted(self.sampleNames)
+
+        if sampleTotalReadCountFilename:
+            with open(sampleTotalReadCountFilename) as fp:
+                sampleTotalReadCounts = readSampleTotalReadCounts(fp)
+        else:
+            sampleTotalReadCounts = None
 
         cols = 5
         rows = int(len(virusTitles) / cols) + (
@@ -584,7 +710,8 @@ class ProteinGrouper(object):
 
         for i, virusTitle in enumerate(virusTitles):
             row, col = next(coords)
-            self._virusSamplePlot(virusTitle, sampleNames, ax[row][col])
+            self._virusSamplePlot(virusTitle, sampleNames, ax[row][col],
+                                  sampleTotalReadCounts=sampleTotalReadCounts)
 
         # Hide the final panel graphs (if any) that have no content. We do
         # this because the panel is a rectangular grid and some of the
