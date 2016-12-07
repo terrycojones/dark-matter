@@ -443,7 +443,7 @@ class ProteinGrouper(object):
                     append(
                         '<li>'
                         '<span class="stats">'
-                        '%(coverage).2f %(medianScore).2f %(bestScore).2f '
+                        '%(coverage).2f %(medianScore)6.2f %(bestScore)6.2f '
                         '%(readCount)4d %(hspCount)4d %(proteinLength)4d '
                         '%(index)3d '
                         '</span> '
@@ -506,7 +506,7 @@ class ProteinGrouper(object):
                     append(
                         '<li>'
                         '<span class="stats">'
-                        '%(coverage).2f %(medianScore).2f %(bestScore).2f '
+                        '%(coverage).2f %(medianScore)6.2f %(bestScore)6.2f '
                         '%(readCount)4d %(hspCount)4d %(proteinLength)4d '
                         '%(index)3d '
                         '</span> '
