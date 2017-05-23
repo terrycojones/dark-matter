@@ -13,6 +13,7 @@ from __future__ import print_function
 import sys
 import argparse
 from itertools import chain
+from json import dumps
 
 from dark.fasta import FastaReads
 from dark.fastq import FastqReads
@@ -141,6 +142,11 @@ if __name__ == '__main__':
         help=('a string of the taxonomic group on which should be '
               'filtered. eg "Vira" will filter on viruses.'))
 
+    parser.add_argument(
+        '--alignmentsFilename',
+        help=('if given, specifies a file name to write the alignments of '
+              'reads that pass the filtering.'))
+
     args = parser.parse_args()
 
     # Flatten lists of lists that we get from using both nargs='+' and
@@ -204,3 +210,8 @@ if __name__ == '__main__':
 
     for readAlignments in readsAlignments:
         print(readAlignments.read.toStr(format_=format_))
+
+    if args.alignmentsFilename is not None:
+        with open(args.alignmentsFilename, 'w') as fp:
+            print(dumps(readsAlignments.params, separators=(',', ':')),
+                  file=fp)
