@@ -10,7 +10,7 @@ from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
 from contextlib import redirect_stdout
-from typing import Collection, Any
+from typing import Collection, Any, overload
 
 from dark.fasta import FastaReads
 from dark.sam import samfile, samReferenceLengths
@@ -185,6 +185,12 @@ def getReferenceId(
 
     return referenceId
 
+
+@overload
+def getReferenceSeq(fasta: None, referenceId: str) -> None: ...
+
+@overload
+def getReferenceSeq(fasta: str, referenceId: str) -> str: ...
 
 def getReferenceSeq(fasta: str | None, referenceId: str) -> str | None:
     """
