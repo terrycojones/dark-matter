@@ -1,6 +1,6 @@
-from unittest import TestCase
-from io import StringIO
 from contextlib import redirect_stderr
+from io import StringIO
+from unittest import TestCase
 
 from dark.btop import btop2cigar, countGaps, parseBtop
 
