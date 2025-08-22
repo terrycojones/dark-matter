@@ -1,17 +1,29 @@
+import sys
+from typing import Iterator
+
 from dark.cigar import CDEL_STR, CDIFF_STR, CEQUAL_STR, CINS_STR, CMATCH_STR
 
 
-def parseBtop(btopString):
+def parseBtop(
+    btopString: str, duplicateBaseAction: str = "raise"
+) -> Iterator[int | tuple[str, str]]:
     """
     Parse a BTOP string.
 
     The format is described at https://www.ncbi.nlm.nih.gov/books/NBK279682/
 
     @param btopString: A C{str} BTOP sequence.
+    @param duplicateBaseAction: What to do if an erroneous duplicate base is
+        encountered. Must be one of 'ignore', 'warn', or 'raise'. This was added
+        to get around an apparent bug in DIAMOND (version 2.1.10, at least) when
+        it produces a BTOP string from its DAA format.
     @raise ValueError: If C{btopString} is not valid BTOP.
     @return: A generator that yields a series of integers and 2-tuples of
         letters, as found in the BTOP string C{btopString}.
     """
+    if duplicateBaseAction not in {"ignore", "warn", "raise"}:
+        raise ValueError(f"Unknown duplicateBaseAction value {duplicateBaseAction!r}.")
+
     isdigit = str.isdigit
     value = None
     queryLetter = None
@@ -39,11 +51,18 @@ def parseBtop(btopString):
                             "offset %d" % (btopString, offset - 1)
                         )
                     elif queryLetter == char:
-                        raise ValueError(
+                        mesg = (
                             "BTOP string %r has two consecutive identical %r "
                             "letters at offset %d" % (btopString, char, offset - 1)
                         )
-                    yield (queryLetter, char)
+                        if duplicateBaseAction == "raise":
+                            raise ValueError(mesg)
+                        elif duplicateBaseAction == "warn":
+                            print(mesg, file=sys.stderr)
+
+                    if queryLetter != char:
+                        yield (queryLetter, char)
+
                     queryLetter = None
 
     if value is not None:
@@ -55,7 +74,7 @@ def parseBtop(btopString):
         )
 
 
-def countGaps(btopString):
+def countGaps(btopString: str) -> tuple[int, int]:
     """
     Count the query and subject gaps in a BTOP string.
 
@@ -75,7 +94,9 @@ def countGaps(btopString):
     return (queryGaps, subjectGaps)
 
 
-def btop2cigar(btopString, concise=False, aa=False):
+def btop2cigar(
+    btopString: str, concise: bool = False, aa: bool = False
+) -> Iterator[str]:
     """
     Convert a BTOP string to a CIGAR string.
 
@@ -97,7 +118,8 @@ def btop2cigar(btopString, concise=False, aa=False):
     if aa and concise:
         raise ValueError("aa and concise cannot both be True")
 
-    thisLength = thisOperation = currentLength = currentOperation = None
+    thisOperation = currentOperation = None
+    thisLength = currentLength = -1
 
     for item in parseBtop(btopString):
         if isinstance(item, int):
@@ -123,6 +145,8 @@ def btop2cigar(btopString, concise=False, aa=False):
                 thisOperation = CDIFF_STR if concise else CMATCH_STR
 
         if thisOperation == currentOperation:
+            # Sanity check that currentLength already has a valid value.
+            assert currentLength != -1
             currentLength += thisLength
         else:
             if currentOperation:
@@ -130,6 +154,8 @@ def btop2cigar(btopString, concise=False, aa=False):
                     (3 * currentLength) if aa else currentLength,
                     currentOperation,
                 )
+            # Sanity check that thisLength and thisOperation already have valid values.
+            assert thisLength != -1 and thisOperation is not None
             currentLength, currentOperation = thisLength, thisOperation
 
     # We reached the end of the BTOP string. If there was an operation

@@ -1,4 +1,6 @@
 from unittest import TestCase
+from io import StringIO
+from contextlib import redirect_stderr
 
 from dark.btop import btop2cigar, countGaps, parseBtop
 
@@ -35,16 +37,49 @@ class TestParseBtop(TestCase):
         error = "^BTOP string '36--' has two consecutive gaps at offset 2$"
         self.assertRaisesRegex(ValueError, error, list, parseBtop("36--"))
 
-    def testConsecutiveIdentical(self):
+    def testConsecutiveIdenticalRaises(self):
         """
         An argument that has two consecutive identical (non-gap) characters
-        must result in a ValueError.
+        must result in a ValueError unless told to ignore the error.
         """
         error = (
-            "^BTOP string '36AA' has two consecutive identical 'A' "
-            "letters at offset 2$"
+            "^BTOP string '36AA' has two consecutive identical 'A' letters at offset 2$"
         )
         self.assertRaisesRegex(ValueError, error, list, parseBtop("36AA"))
+
+    def testConsecutiveIdenticalWarn(self):
+        """
+        An argument that has two consecutive identical (non-gap) characters
+        must result in a warning to standard error if duplicateBaseAction is "warn".
+        """
+        error = (
+            "BTOP string '36AA' has two consecutive identical 'A' letters at offset 2\n"
+        )
+        stderr = StringIO()
+
+        with redirect_stderr(stderr):
+            list(parseBtop("36AA", duplicateBaseAction="warn"))
+
+        assert stderr.getvalue() == error
+
+    def testConsecutiveIdenticalIgnore(self):
+        """
+        An argument that has two consecutive identical "A" characters
+        must ignore the duplicate if told to.
+        """
+        self.assertEqual(
+            [("A", "G"), ("C", "T")],
+            list(parseBtop("AGAACT", duplicateBaseAction="ignore")),
+        )
+
+    def testUnknownDuplicateBaseActionValue(self):
+        """
+        An unknown duplicateBaseAction value must result in a ValueError.
+        """
+        error = r"^Unknown duplicateBaseAction value 'x'\.$"
+        self.assertRaisesRegex(
+            ValueError, error, list, parseBtop("36AA", duplicateBaseAction="x")
+        )
 
     def testEmpty(self):
         """
